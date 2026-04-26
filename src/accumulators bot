@@ -1,0 +1,102 @@
+// accumulatorDynamicBot.js
+
+import DerivAPI from '@deriv/deriv-api/dist/DerivAPI';
+
+const api = new DerivAPI({ app_id: 1089 });
+
+let isTrading = false;
+let contractId = null;
+let tradeCount = 0;
+
+let referencePrice = null;
+
+export async function startBot(token, config) {
+    await api.basic.authorize(token);
+    subscribeTicks(config);
+}
+
+// 📡 Tick Stream
+function subscribeTicks(config) {
+    api.basic.subscribe({ ticks: config.symbol }).onUpdate(({ tick }) => {
+        const price = tick.quote;
+
+        if (referencePrice === null) {
+            referencePrice = price;
+            return;
+        }
+
+        const upper = referencePrice + config.barrierDistance;
+        const lower = referencePrice - config.barrierDistance;
+
+        const barrierHit = price >= upper || price <= lower;
+
+        if (barrierHit && !isTrading && tradeCount < config.maxTrades) {
+            placeTrade(config);
+            referencePrice = price;
+        }
+    });
+}
+
+// 📈 Place Trade
+async function placeTrade(config) {
+    try {
+        const proposal = await api.contract.getProposal({
+            proposal: 1,
+            amount: config.stake,
+            basis: 'stake',
+            contract_type: 'ACCU',
+            currency: 'USD',
+            symbol: config.symbol,
+            growth_rate: config.growthRate
+        });
+
+        const buy = await api.contract.buy({
+            buy: proposal.proposal.id,
+            price: config.stake
+        });
+
+        contractId = buy.buy.contract_id;
+        isTrading = true;
+
+        monitorContract(config);
+
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+// 📊 Monitor Contract
+function monitorContract(config) {
+    api.contract.subscribe({ contract_id: contractId })
+        .onUpdate(async (contract) => {
+
+            // ✅ Take profit
+            if (contract.profit >= config.takeProfit && !contract.is_sold) {
+                await sellContract();
+                return;
+            }
+
+            // ❌ Contract ended
+            if (contract.is_sold) {
+                isTrading = false;
+                contractId = null;
+                tradeCount++;
+
+                console.log(`Trade ${tradeCount}/${config.maxTrades}`);
+
+                // Wait for next barrier hit (no instant re-entry)
+            }
+        });
+}
+
+// 💰 Sell
+async function sellContract() {
+    try {
+        await api.contract.sell({
+            sell: contractId,
+            price: 0
+        });
+    } catch (err) {
+        console.error("Sell failed:", err);
+    }
+}
