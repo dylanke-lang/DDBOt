@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Digit Trigger Tool</title>
+  <style>
+    body { font-family: Arial; background:#0f172a; color:white; padding:20px }
+    .card { background:#1e293b; padding:20px; border-radius:12px; margin-bottom:20px }
+    input, select, button { padding:10px; margin:5px; border-radius:8px; border:none }
+    button { background:#22c55e; color:black; cursor:pointer }
+  </style>
+</head>
+<body>
+
+<h2>Digit Trading Tool (Deriv)</h2>
+
+<div class="card">
+  <h3>Settings</h3>
+  <label>Volatility Index:</label>
+  <select id="symbol">
+    <option value="R_10">Volatility 10</option>
+    <option value="R_25">Volatility 25</option>
+    <option value="R_50">Volatility 50</option>
+    <option value="R_75">Volatility 75</option>
+    <option value="R_100">Volatility 100</option>
+  </select>
+  <br>
+  <label>Stake:</label>
+  <input type="number" id="stake" value="1" />
+  <br>
+  <button onclick="start()">Start</button>
+  <button onclick="stop()">Stop</button>
+</div>
+
+<div class="card">
+  <h3>Live Tick</h3>
+  <h1 id="tick">-</h1>
+  <p id="log"></p>
+</div>
+
+<script>
+let ws;
+let running = false;
+
+function start() {
+  const symbol = document.getElementById('symbol').value;
+  ws = new WebSocket('wss://ws.derivws.com/websockets/v3?app_id=1089');
+
+  ws.onopen = () => {
+    running = true;
+    ws.send(JSON.stringify({
+      ticks: symbol,
+      subscribe: 1
+    }));
+  };
+
+  ws.onmessage = (msg) => {
+    if (!running) return;
+
+    const data = JSON.parse(msg.data);
+    if (!data.tick) return;
+
+    const price = data.tick.quote;
+    const lastDigit = parseInt(price.toString().slice(-1));
+
+    document.getElementById('tick').innerText = price;
+
+    if (lastDigit < 2) {
+      log('Signal: BUY OVER 1');
+      trade('DIGITOVER', 1);
+    }
+
+    if (lastDigit > 7) {
+      log('Signal: BUY UNDER 8');
+      trade('DIGITUNDER', 8);
+    }
+  };
+}
+
+function stop() {
+  running = false;
+  if (ws) ws.close();
+}
+
+function log(msg) {
+  document.getElementById('log').innerText = msg;
+}
+
+function trade(contract_type, barrier) {
+  const stake = document.getElementById('stake').value;
+
+  ws.send(JSON.stringify({
+    buy: 1,
+    price: stake,
+    parameters: {
+      amount: stake,
+      basis: "stake",
+      contract_type: contract_type,
+      currency: "USD",
+      duration: 1,
+      duration_unit: "t",
+      symbol: document.getElementById('symbol').value,
+      barrier: barrier
+    }
+  }));
+}
+</script>
+
+</body>
+</html>
